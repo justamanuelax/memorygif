@@ -1,70 +1,97 @@
+// This code allows a user to search for Gifs using the Giphy API, select certain ones (chosenGifIDs), and then "Store For Later".
+// In that mode, Gifs become purple boxes that can be flipped to reveal if they match a random Giphy displayed at the bottom.
+// Once all chosen Gifs are guessed, the game says "You Won!".
+
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 
 export default function App() {
-  // Gifs from local storage (old + new searches)
+  // allLocalGifs: stores every Gif fetched so far (old + new). Helps preserve data across multiple searches.
   const [allLocalGifs, setAllLocalGifs] = useState([]);
-  // Gifs currently displayed on the main page (only new search results)
+
+  // gifs: the Gifs displayed on the normal search page (only the newly searched results).
   const [gifs, setGifs] = useState([]);
+
+  // search: the user's search query string.
   const [search, setSearch] = useState('');
+
+  // limit: how many Gifs to fetch per search.
   const [limit, setLimit] = useState(17);
+
+  // loading: whether we are currently fetching Gifs.
   const [loading, setLoading] = useState(false);
 
-  // Which GIFs the user has chosen (turn green border)
+  // chosenGifIDs: IDs of Gifs that the user has chosen (clicked "Choose").
+  // In the covered mode, these become purple boxes.
   const [chosenGifIDs, setChosenGifIDs] = useState([]);
-  // Whether to show only chosen GIFs
+
+  // showOnlyChosen: if true, we display only the chosen Gifs in a separate page.
   const [showOnlyChosen, setShowOnlyChosen] = useState(false);
 
-  // Flip states for each purple box (boxKey => boolean).
-  const [flipMap, setFlipMap] = useState({});
-  // Whether the chosen GIFs are “covered” by purple boxes
+  // covered: whether the chosen Gifs are covered by purple boxes.
   const [covered, setCovered] = useState(false);
 
-  // We'll pick a random GIF from the chosen set to guess
-  const [targetGif, setTargetGif] = useState(null);
-  // A message displayed at bottom: “Correct!” or “Wrong!” or empty
-  const [feedback, setFeedback] = useState('');
+  // flipMap: an object mapping unique keys (gif.id + index) to boolean indicating if that purple box is flipped.
+  const [flipMap, setFlipMap] = useState({});
 
-  // Hard-coded environment vars
+  // randomGif: the currently selected "target" Gif the user must find among the purple boxes.
+  const [randomGif, setRandomGif] = useState(null);
+
+  // score: how many correct guesses so far.
+  const [score, setScore] = useState(0);
+
+  // gameComplete: whether the user has guessed all chosen Gifs.
+  const [gameComplete, setGameComplete] = useState(false);
+
+  // Hard-coded environment variables for the Giphy API.
   const API_KEY = 'h2ysalzwiuIgc3MhIOqMocPo65NUwLkv';
   const BASE_URL = 'https://api.giphy.com/v1/gifs/search';
 
+  // Range for user to set the limit, if desired.
   const limitmin = 1;
   const limitmax = 100;
 
-  // Merge new results with old data for localStorage, but only show new results on screen
+  // searchGifs: fetches new Gifs from the Giphy API, merges them with old.
+  // displays only the newly fetched Gifs in 'gifs'.
   const searchGifs = async () => {
     setLoading(true);
     try {
+      // Make an HTTP GET request to the Giphy API.
       const response = await axios.get(BASE_URL, {
         params: { api_key: API_KEY, q: search, limit },
       });
       const newData = response.data.data;
-      // Merge with old data for localStorage
+
+      // Merge new results with any old stored Gifs.
       const newIDs = newData.map((g) => g.id);
       const oldNoDuplicates = allLocalGifs.filter(
         (oldGif) => !newIDs.includes(oldGif.id)
       );
       const mergedAll = [...oldNoDuplicates, ...newData];
-      localStorage.setItem('allGifs', JSON.stringify(mergedAll));
-      setAllLocalGifs(mergedAll);
 
-      // Show only newly searched results on main page
-      setGifs(newData);
-    } catch (error) {
-      console.error('Error fetching data:', error);
+      // Save the updated list to localStorage.
+      localStorage.setItem('allGifs', JSON.stringify(mergedAll));
+
+      // Update states.
+      setAllLocalGifs(mergedAll);
+      setGifs(newData); // Only show new results on the main page.
+    } catch (err) {
+      console.error('Error fetching data:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  // Choose/unchoose a GIF
+  // chooseGif: toggles whether a Gif is in the chosenGifIDs array or not.
+  // Also saves the updated array to localStorage.
   const chooseGif = (gifId) => {
     setChosenGifIDs((prev) => {
       let updated;
       if (prev.includes(gifId)) {
+        // If it's already chosen, remove it.
         updated = prev.filter((id) => id !== gifId);
       } else {
+        // Otherwise, add it.
         updated = [...prev, gifId];
       }
       localStorage.setItem('chosenGifIDs', JSON.stringify(updated));
@@ -72,7 +99,7 @@ export default function App() {
     });
   };
 
-  // Download a GIF
+  // downloadGif: downloads a Gif from its URL.
   const downloadGif = async (gifUrl, gifId) => {
     try {
       const res = await fetch(gifUrl);
@@ -90,22 +117,43 @@ export default function App() {
     }
   };
 
-  // Show only chosen GIFs on separate page
+  // storeForLater: sets showOnlyChosen = true, so we see only the chosen Gifs page.
   const storeForLater = () => {
     setShowOnlyChosen(true);
   };
 
-  // Undo: reset to normal search page
-  const handleUndo = () => {
-    setFlipMap({});
-    setCovered(false);
-    setTargetGif(null);
-    setFeedback('');
-    setShowOnlyChosen(false);
+  // handleFlipBox: called when user clicks a purple box.
+  // If the flipped Gif is correct, increment score and remove that Gif after 2.5s.
+  // Then pick the next random.
+  const handleFlipBox = (boxKey, gif) => {
+    // If the game is over, do nothing.
+    if (gameComplete) return;
+
+    // Flip from hidden->visible or visible->hidden.
+    setFlipMap((prev) => ({ ...prev, [boxKey]: !prev[boxKey] }));
+
+    // If flipping from hidden->visible and it matches the randomGif.
+    if (!flipMap[boxKey] && randomGif && gif.id === randomGif.id) {
+      // correct guess => increment score.
+      setScore((p) => p + 1);
+
+      // Wait 2.5 seconds, then remove from chosenGifIDs, pick next random.
+      setTimeout(() => {
+        setChosenGifIDs((prev) => {
+          const updated = prev.filter((id) => id !== gif.id);
+          localStorage.setItem('chosenGifIDs', JSON.stringify(updated));
+          return updated;
+        });
+        pickRandomGif();
+      }, 2500);
+    }
   };
 
-  // Wipe: remove everything from localStorage and states
+  // handleWipe: clears everything from localStorage, resets states, unless the game is ongoing.
   const handleWipe = () => {
+    // If game is not complete but covered => do nothing.
+    if (covered && !gameComplete) return;
+
     localStorage.removeItem('chosenGifIDs');
     localStorage.removeItem('allGifs');
     setAllLocalGifs([]);
@@ -113,11 +161,60 @@ export default function App() {
     setGifs([]);
     setFlipMap({});
     setCovered(false);
-    setTargetGif(null);
-    setFeedback('');
+    setRandomGif(null);
+    setGameComplete(false);
+    setScore(0);
   };
 
-  // On first load, restore from localStorage
+  // handleUndo: goes back to normal search page, if allowed.
+  const handleUndo = () => {
+    // If game is not complete but covered => do nothing.
+    if (covered && !gameComplete) return;
+
+    setFlipMap({});
+    setCovered(false);
+    setRandomGif(null);
+    setGameComplete(false);
+    setScore(0);
+    setShowOnlyChosen(false);
+  };
+
+  // pickRandomGif: selects a random Gif from the chosenGifIDs as the next target.
+  // If none remain => gameComplete.
+  const pickRandomGif = () => {
+    const chosenList = allLocalGifs.filter((g) => chosenGifIDs.includes(g.id));
+    if (chosenList.length === 0) {
+      // No chosen left => you win.
+      setRandomGif(null);
+      setGameComplete(true);
+      return;
+    }
+    const idx = Math.floor(Math.random() * chosenList.length);
+    setRandomGif(chosenList[idx]);
+  };
+
+  // handleCover: covers all chosen Gifs with purple boxes and picks the first random.
+  const handleCover = () => {
+    if (chosenGifIDs.length === 0) return; // no chosen => do nothing.
+
+    setCovered(true);
+    setFlipMap({});
+    setScore(0);
+    setGameComplete(false);
+    pickRandomGif();
+  };
+
+  // handleRematch: resets coverage, flips, random, etc. to allow replay with the same chosen Gifs.
+  const handleRematch = () => {
+    setFlipMap({});
+    setCovered(false);
+    setGameComplete(false);
+    setScore(0);
+    setRandomGif(null);
+    // chosenGifIDs remain, so you can re-cover them.
+  };
+
+  // useEffect: on first load, read from localStorage (allGifs + chosenGifIDs) so user data persists.
   useEffect(() => {
     const savedAll = localStorage.getItem('allGifs');
     if (savedAll) {
@@ -133,14 +230,18 @@ export default function App() {
     }
   }, []);
 
-  // Dark/Light theme
+  // Basic dark/light theme toggling.
   const [isDarkMode, setIsDarkMode] = useState(false);
+
+  // Load theme from localStorage on mount.
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme) {
       setIsDarkMode(savedTheme === 'dark');
     }
   }, []);
+
+  // Switch between dark or light mode.
   const toggleTheme = () => {
     setIsDarkMode((prev) => {
       const newMode = !prev;
@@ -148,6 +249,8 @@ export default function App() {
       return newMode;
     });
   };
+
+  // Whenever isDarkMode changes, adjust the document body style.
   useEffect(() => {
     if (isDarkMode) {
       document.body.style.backgroundColor = 'black';
@@ -158,50 +261,9 @@ export default function App() {
     }
   }, [isDarkMode]);
 
-  // Flip a purple box
-  const handleFlipBox = (gif, boxKey) => {
-    // Flip or unflip
-    setFlipMap((prev) => ({ ...prev, [boxKey]: !prev[boxKey] }));
-
-    // If flipping to show, check correctness
-    // If it matches the targetGif?.id => correct, else wrong
-    // We'll pick a new random if correct
-    if (!flipMap[boxKey]) {
-      // means we are flipping from hidden -> visible
-      if (targetGif && gif.id === targetGif.id) {
-        setFeedback('Correct!');
-        pickRandomTarget();
-      } else {
-        if (targetGif) {
-          setFeedback('Wrong!');
-        }
-      }
-    }
-  };
-
-  // Pick a random target from all chosen Gifs
-  const pickRandomTarget = () => {
-    // Only pick from chosen Gifs => filter from allLocalGifs
-    const chosenList = allLocalGifs.filter((g) => chosenGifIDs.includes(g.id));
-    if (chosenList.length === 0) {
-      setTargetGif(null);
-      setFeedback('');
-      return;
-    }
-    const idx = Math.floor(Math.random() * chosenList.length);
-    setTargetGif(chosenList[idx]);
-    setFeedback('');
-  };
-
-  // Called when we click “Cover” => sets covered = true, picks a random target
-  const handleCover = () => {
-    setFlipMap({});
-    setCovered(true);
-    pickRandomTarget();
-  };
-
-  // If showing only chosen
+  // If we are showing only chosen Gifs.
   if (showOnlyChosen) {
+    // displayed: all the Gifs that are currently chosen.
     const displayed = allLocalGifs.filter((gif) => chosenGifIDs.includes(gif.id));
 
     return (
@@ -219,7 +281,7 @@ export default function App() {
           const boxKey = gif.id + '-' + idx;
           const isFlipped = flipMap[boxKey] || false;
 
-          // If not covered, show normal green-border Gifs
+          // If not covered, just show normal Gifs.
           if (!covered) {
             return (
               <div key={boxKey}>
@@ -243,122 +305,161 @@ export default function App() {
                 </div>
               </div>
             );
-          }
-
-          // else covered => purple box
-          return (
-            <div key={boxKey}>
-              {isFlipped ? (
-                // show the gif
-                <div
-                  style={{
-                    border: '5px solid purple',
-                    display: 'inline-block',
-                    borderRadius: '5px',
-                  }}
-                  onClick={() => handleFlipBox(gif, boxKey)}
-                >
-                  <img
-                    src={gif.images.fixed_height.url}
-                    alt={gif.title}
+          } else {
+            // If covered, show purple box or flipped.
+            return (
+              <div key={boxKey}>
+                {isFlipped ? (
+                  <div
+                    style={{
+                      border: '5px solid purple',
+                      display: 'inline-block',
+                      borderRadius: '5px',
+                    }}
+                  >
+                    <img
+                      src={gif.images.fixed_height.url}
+                      alt={gif.title}
+                      style={{
+                        width: '120px',
+                        height: '120px',
+                        objectFit: 'cover',
+                        borderRadius: '10px',
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div
+                    onClick={() => handleFlipBox(boxKey, gif)}
                     style={{
                       width: '120px',
                       height: '120px',
-                      objectFit: 'cover',
-                      borderRadius: '10px',
+                      backgroundColor: 'purple',
+                      borderRadius: '5px',
+                      cursor: 'pointer',
                     }}
                   />
-                </div>
-              ) : (
-                // purple box covers the gif
-                <div
-                  onClick={() => handleFlipBox(gif, boxKey)}
-                  style={{
-                    width: '120px',
-                    height: '120px',
-                    backgroundColor: 'purple',
-                    borderRadius: '5px',
-                    cursor: 'pointer',
-                  }}
-                />
-              )}
-            </div>
-          );
+                )}
+              </div>
+            );
+          }
         })}
 
-        {/* Wipe (left) */}
+        {/* If gameComplete => show "You Won" overlay with score and a rematch button. */}
+        {gameComplete && (
+          <div
+            style={{
+              position: 'fixed',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              backgroundColor: 'rgba(0, 0, 0, 0.7)',
+              color: 'white',
+              padding: '20px',
+              borderRadius: '10px',
+              textAlign: 'center',
+            }}
+          >
+            <h1>You Won!</h1>
+            <p>Score: {score}</p>
+            <button
+              onClick={handleRematch}
+              style={{
+                marginTop: '10px',
+                padding: '10px',
+                backgroundColor: 'green',
+                color: 'white',
+                borderRadius: '5px',
+                border: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              Rematch
+            </button>
+          </div>
+        )}
+
+        {/* Wipe => clears everything; disabled if game in progress. */}
         <button
           onClick={handleWipe}
+          disabled={covered && !gameComplete}
           style={{
             position: 'fixed',
             bottom: '20px',
             left: '20px',
             padding: '10px',
-            backgroundColor: 'red',
+            backgroundColor:
+              covered && !gameComplete ? 'lightgray' : 'red',
             color: 'white',
             border: 'none',
             borderRadius: '5px',
-            cursor: 'pointer',
+            cursor:
+              covered && !gameComplete ? 'not-allowed' : 'pointer',
           }}
         >
           Wipe
         </button>
 
-        {/* Cover (center) */}
+        {/* Cover => let user guess among purple boxes. Disabled if no chosen, or already covered. */}
         <button
           onClick={handleCover}
-          disabled={covered}
+          disabled={covered || displayed.length === 0}
           style={{
             position: 'fixed',
             bottom: '20px',
             left: '50%',
             transform: 'translateX(-50%)',
             padding: '10px',
-            backgroundColor: covered ? 'lightgray' : 'purple',
+            backgroundColor:
+              covered || displayed.length === 0 ? 'lightgray' : 'purple',
             color: 'white',
             border: 'none',
             borderRadius: '5px',
-            cursor: covered ? 'not-allowed' : 'pointer',
+            cursor:
+              covered || displayed.length === 0 ? 'not-allowed' : 'pointer',
           }}
         >
           Cover
         </button>
 
-        {/* Undo (right) */}
+        {/* Undo => reverts to normal search page; disabled if game not complete yet. */}
         <button
           onClick={handleUndo}
+          disabled={covered && !gameComplete}
           style={{
             position: 'fixed',
             bottom: '20px',
             right: '20px',
             padding: '10px',
-            backgroundColor: 'gray',
+            backgroundColor:
+              covered && !gameComplete ? 'lightgray' : 'gray',
             color: 'white',
             border: 'none',
             borderRadius: '5px',
-            cursor: 'pointer',
+            cursor: covered && !gameComplete ? 'not-allowed' : 'pointer',
           }}
         >
           Undo
         </button>
 
-        {/* Bottom feedback area: show target GIF + Correct/Wrong */}
-        {covered && targetGif && (
+        {/* If covered and not complete => show randomGif at bottom. The user tries to find it among the purple boxes. */}
+        {covered && !gameComplete && randomGif && (
           <div
             style={{
               position: 'fixed',
-              bottom: '0',
-              left: '0',
+              bottom: 0,
+              left: 0,
               width: '100%',
               backgroundColor: '#ddd',
+              borderTop: '2px solid #ccc',
               padding: '10px',
               textAlign: 'center',
             }}
           >
-            <p style={{ fontWeight: 'bold' }}>Your Random Gif to Find:</p>
+            <h3>Find This Gif</h3>
             <img
-              src={targetGif.images.fixed_height.url}
-              alt={targetGif.title}
+              src={randomGif.images.fixed_height.url}
+              alt={randomGif.title}
               style={{
                 width: '150px',
                 height: '150px',
@@ -366,30 +467,38 @@ export default function App() {
                 borderRadius: '10px',
               }}
             />
-            <p>{feedback}</p>
+            <p>Score: {score}</p>
           </div>
         )}
       </div>
     );
   }
 
-  // Otherwise, normal search page
+  // Normal search page.
+
+  // handleRematch: reset coverage, flips, random, etc.
+  // but keep chosenGifIDs so the user can replay with the same Gifs.
+ 
+
   return (
     <div>
+      {/* Toggle for dark or light theme */}
       <span>{isDarkMode ? '🌙' : '☀️'}</span>
       &nbsp;
       <input
-        type="range"
+        type='range'
         onChange={toggleTheme}
         min={0}
         max={1}
         style={{ width: '40px' }}
       />
+
       <div style={{ textAlign: 'center', padding: '20px' }}>
         <h1>Search Giphy:</h1>
+        {/* The search input, user types a query, can press Enter or the Search button. */}
         <input
-          type="text"
-          placeholder="search gifs"
+          type='text'
+          placeholder='search gifs'
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => {
@@ -420,9 +529,10 @@ export default function App() {
           Search
         </button>
 
+        {/* If loading => show a spinner, else show the Gifs. */}
         {loading ? (
           <p>
-            <img src="../public/bally.svg" alt="ballbounce" />
+            <img src='../public/bally.svg' alt='loading' />
           </p>
         ) : (
           <div
@@ -455,11 +565,10 @@ export default function App() {
                       }}
                     />
                   </div>
+                  {/* Each Gif has two buttons: Download, Choose. */}
                   <div style={{ marginTop: '5px' }}>
                     <button
-                      onClick={() =>
-                        downloadGif(gif.images.fixed_height.url, gif.id)
-                      }
+                      onClick={() => downloadGif(gif.images.fixed_height.url, gif.id)}
                       style={{
                         marginRight: '3px',
                         padding: '3px',
@@ -490,6 +599,7 @@ export default function App() {
           </div>
         )}
 
+        {/* Store selected for later => showOnlyChosen mode. */}
         <button
           onClick={storeForLater}
           style={{
