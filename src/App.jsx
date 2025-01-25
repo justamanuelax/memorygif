@@ -2,22 +2,37 @@ import { useEffect, useState } from 'react';
 import axios from 'axios';
 
 export default function App() {
+  // Gifs from local storage (old + new searches)
   const [allLocalGifs, setAllLocalGifs] = useState([]);
+  // Gifs currently displayed on the main page (only new search results)
   const [gifs, setGifs] = useState([]);
   const [search, setSearch] = useState('');
   const [limit, setLimit] = useState(17);
   const [loading, setLoading] = useState(false);
+
+  // Which GIFs the user has chosen (turn green border)
   const [chosenGifIDs, setChosenGifIDs] = useState([]);
+  // Whether to show only chosen GIFs
   const [showOnlyChosen, setShowOnlyChosen] = useState(false);
 
-  // Example environment variables
-  const API_KEY = import.meta.env.VITE_API_KEY;
-  const BASE_URL = import.meta.env.VITE_BASE_URL;
+  // Flip states for each purple box (boxKey => boolean).
+  const [flipMap, setFlipMap] = useState({});
+  // Whether the chosen GIFs are “covered” by purple boxes
+  const [covered, setCovered] = useState(false);
+
+  // We'll pick a random GIF from the chosen set to guess
+  const [targetGif, setTargetGif] = useState(null);
+  // A message displayed at bottom: “Correct!” or “Wrong!” or empty
+  const [feedback, setFeedback] = useState('');
+
+  // Hard-coded environment vars
+  const API_KEY = 'h2ysalzwiuIgc3MhIOqMocPo65NUwLkv';
+  const BASE_URL = 'https://api.giphy.com/v1/gifs/search';
 
   const limitmin = 1;
   const limitmax = 100;
 
-  // Merges new results with old but only shows the new results on screen
+  // Merge new results with old data for localStorage, but only show new results on screen
   const searchGifs = async () => {
     setLoading(true);
     try {
@@ -25,18 +40,16 @@ export default function App() {
         params: { api_key: API_KEY, q: search, limit },
       });
       const newData = response.data.data;
-
       // Merge with old data for localStorage
       const newIDs = newData.map((g) => g.id);
       const oldNoDuplicates = allLocalGifs.filter(
         (oldGif) => !newIDs.includes(oldGif.id)
       );
       const mergedAll = [...oldNoDuplicates, ...newData];
-
       localStorage.setItem('allGifs', JSON.stringify(mergedAll));
       setAllLocalGifs(mergedAll);
 
-      // Show only newly searched results on screen
+      // Show only newly searched results on main page
       setGifs(newData);
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -45,7 +58,7 @@ export default function App() {
     }
   };
 
-  // Toggle choose/unchoose a GIF
+  // Choose/unchoose a GIF
   const chooseGif = (gifId) => {
     setChosenGifIDs((prev) => {
       let updated;
@@ -77,24 +90,31 @@ export default function App() {
     }
   };
 
-  // Show only chosen GIFs
+  // Show only chosen GIFs on separate page
   const storeForLater = () => {
     setShowOnlyChosen(true);
   };
 
-  // Undo store-for-later
+  // Undo: reset to normal search page
   const handleUndo = () => {
+    setFlipMap({});
+    setCovered(false);
+    setTargetGif(null);
+    setFeedback('');
     setShowOnlyChosen(false);
   };
 
-  // Wipe everything and also empty the 'gifs' array
-  // so if user clicks undo without searching again, there's no stale GIF to choose.
+  // Wipe: remove everything from localStorage and states
   const handleWipe = () => {
     localStorage.removeItem('chosenGifIDs');
     localStorage.removeItem('allGifs');
     setAllLocalGifs([]);
     setChosenGifIDs([]);
-    setGifs([]); // ensure page is truly cleared
+    setGifs([]);
+    setFlipMap({});
+    setCovered(false);
+    setTargetGif(null);
+    setFeedback('');
   };
 
   // On first load, restore from localStorage
@@ -138,8 +158,52 @@ export default function App() {
     }
   }, [isDarkMode]);
 
-  // If showing only chosen GIFs
+  // Flip a purple box
+  const handleFlipBox = (gif, boxKey) => {
+    // Flip or unflip
+    setFlipMap((prev) => ({ ...prev, [boxKey]: !prev[boxKey] }));
+
+    // If flipping to show, check correctness
+    // If it matches the targetGif?.id => correct, else wrong
+    // We'll pick a new random if correct
+    if (!flipMap[boxKey]) {
+      // means we are flipping from hidden -> visible
+      if (targetGif && gif.id === targetGif.id) {
+        setFeedback('Correct!');
+        pickRandomTarget();
+      } else {
+        if (targetGif) {
+          setFeedback('Wrong!');
+        }
+      }
+    }
+  };
+
+  // Pick a random target from all chosen Gifs
+  const pickRandomTarget = () => {
+    // Only pick from chosen Gifs => filter from allLocalGifs
+    const chosenList = allLocalGifs.filter((g) => chosenGifIDs.includes(g.id));
+    if (chosenList.length === 0) {
+      setTargetGif(null);
+      setFeedback('');
+      return;
+    }
+    const idx = Math.floor(Math.random() * chosenList.length);
+    setTargetGif(chosenList[idx]);
+    setFeedback('');
+  };
+
+  // Called when we click “Cover” => sets covered = true, picks a random target
+  const handleCover = () => {
+    setFlipMap({});
+    setCovered(true);
+    pickRandomTarget();
+  };
+
+  // If showing only chosen
   if (showOnlyChosen) {
+    const displayed = allLocalGifs.filter((gif) => chosenGifIDs.includes(gif.id));
+
     return (
       <div
         style={{
@@ -148,34 +212,81 @@ export default function App() {
           gap: '5px',
           padding: '20px',
           textAlign: 'left',
+          position: 'relative',
         }}
       >
-        {allLocalGifs
-          .filter((gif) => chosenGifIDs.includes(gif.id))
-          .map((gif) => (
-            <div key={gif.id}>
-              <div
-                style={{
-                  border: '5px solid green',
-                  display: 'inline-block',
-                  borderRadius: '5px',
-                }}
-              >
-                <img
-                  src={gif.images.fixed_height.url}
-                  alt={gif.title}
+        {displayed.map((gif, idx) => {
+          const boxKey = gif.id + '-' + idx;
+          const isFlipped = flipMap[boxKey] || false;
+
+          // If not covered, show normal green-border Gifs
+          if (!covered) {
+            return (
+              <div key={boxKey}>
+                <div
+                  style={{
+                    border: '5px solid green',
+                    display: 'inline-block',
+                    borderRadius: '5px',
+                  }}
+                >
+                  <img
+                    src={gif.images.fixed_height.url}
+                    alt={gif.title}
+                    style={{
+                      width: '120px',
+                      height: '120px',
+                      objectFit: 'cover',
+                      borderRadius: '10px',
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          }
+
+          // else covered => purple box
+          return (
+            <div key={boxKey}>
+              {isFlipped ? (
+                // show the gif
+                <div
+                  style={{
+                    border: '5px solid purple',
+                    display: 'inline-block',
+                    borderRadius: '5px',
+                  }}
+                  onClick={() => handleFlipBox(gif, boxKey)}
+                >
+                  <img
+                    src={gif.images.fixed_height.url}
+                    alt={gif.title}
+                    style={{
+                      width: '120px',
+                      height: '120px',
+                      objectFit: 'cover',
+                      borderRadius: '10px',
+                    }}
+                  />
+                </div>
+              ) : (
+                // purple box covers the gif
+                <div
+                  onClick={() => handleFlipBox(gif, boxKey)}
                   style={{
                     width: '120px',
                     height: '120px',
-                    objectFit: 'cover',
-                    borderRadius: '10px',
+                    backgroundColor: 'purple',
+                    borderRadius: '5px',
+                    cursor: 'pointer',
                   }}
                 />
-              </div>
+              )}
             </div>
-          ))}
+          );
+        })}
 
-        {/* Wipe: on left side */}
+        {/* Wipe (left) */}
         <button
           onClick={handleWipe}
           style={{
@@ -193,7 +304,27 @@ export default function App() {
           Wipe
         </button>
 
-        {/* Undo: on right side */}
+        {/* Cover (center) */}
+        <button
+          onClick={handleCover}
+          disabled={covered}
+          style={{
+            position: 'fixed',
+            bottom: '20px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            padding: '10px',
+            backgroundColor: covered ? 'lightgray' : 'purple',
+            color: 'white',
+            border: 'none',
+            borderRadius: '5px',
+            cursor: covered ? 'not-allowed' : 'pointer',
+          }}
+        >
+          Cover
+        </button>
+
+        {/* Undo (right) */}
         <button
           onClick={handleUndo}
           style={{
@@ -210,11 +341,39 @@ export default function App() {
         >
           Undo
         </button>
+
+        {/* Bottom feedback area: show target GIF + Correct/Wrong */}
+        {covered && targetGif && (
+          <div
+            style={{
+              position: 'fixed',
+              bottom: '0',
+              left: '0',
+              width: '100%',
+              backgroundColor: '#ddd',
+              padding: '10px',
+              textAlign: 'center',
+            }}
+          >
+            <p style={{ fontWeight: 'bold' }}>Your Random Gif to Find:</p>
+            <img
+              src={targetGif.images.fixed_height.url}
+              alt={targetGif.title}
+              style={{
+                width: '150px',
+                height: '150px',
+                objectFit: 'cover',
+                borderRadius: '10px',
+              }}
+            />
+            <p>{feedback}</p>
+          </div>
+        )}
       </div>
     );
   }
 
-  // Otherwise, normal page
+  // Otherwise, normal search page
   return (
     <div>
       <span>{isDarkMode ? '🌙' : '☀️'}</span>
