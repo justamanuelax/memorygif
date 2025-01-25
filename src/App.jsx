@@ -2,46 +2,64 @@ import { useEffect, useState } from 'react';
 import axios from 'axios';
 
 export default function App() {
-  // Gifs data
+  const [allLocalGifs, setAllLocalGifs] = useState([]);
   const [gifs, setGifs] = useState([]);
-  // For search strings
   const [search, setSearch] = useState('');
-  // Loading state
-  const [loading, setLoading] = useState(false);
-  // Number of Gifs displayed
   const [limit, setLimit] = useState(17);
-  // Instead of one selectedGifID, we'll store an array of chosen IDs
-  // so that multiple gifs can be highlighted simultaneously
+  const [loading, setLoading] = useState(false);
   const [chosenGifIDs, setChosenGifIDs] = useState([]);
+  const [showOnlyChosen, setShowOnlyChosen] = useState(false);
 
-  // environment vars (for demonstration, placeholders)
-  const API_KEY = 'h2ysalzwiuIgc3MhIOqMocPo65NUwLkv';
-  const BASE_URL = 'https://api.giphy.com/v1/gifs/search';
+  // Example environment variables
+  const API_KEY = import.meta.env.VITE_API_KEY;
+  const BASE_URL = import.meta.env.VITE_BASE_URL;
 
-  // The range for possible request limits
   const limitmin = 1;
   const limitmax = 100;
 
-  // Fetch Gifs from the Giphy API
+  // Merges new results with old but only shows the new results on screen
   const searchGifs = async () => {
     setLoading(true);
     try {
       const response = await axios.get(BASE_URL, {
-        params: {
-          api_key: API_KEY,
-          q: search,
-          limit: limit,
-        },
+        params: { api_key: API_KEY, q: search, limit },
       });
-      setGifs(response.data.data);
+      const newData = response.data.data;
+
+      // Merge with old data for localStorage
+      const newIDs = newData.map((g) => g.id);
+      const oldNoDuplicates = allLocalGifs.filter(
+        (oldGif) => !newIDs.includes(oldGif.id)
+      );
+      const mergedAll = [...oldNoDuplicates, ...newData];
+
+      localStorage.setItem('allGifs', JSON.stringify(mergedAll));
+      setAllLocalGifs(mergedAll);
+
+      // Show only newly searched results on screen
+      setGifs(newData);
     } catch (error) {
-      console.log('Error fetching data', error);
+      console.error('Error fetching data:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  // Download the Gif
+  // Toggle choose/unchoose a GIF
+  const chooseGif = (gifId) => {
+    setChosenGifIDs((prev) => {
+      let updated;
+      if (prev.includes(gifId)) {
+        updated = prev.filter((id) => id !== gifId);
+      } else {
+        updated = [...prev, gifId];
+      }
+      localStorage.setItem('chosenGifIDs', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  // Download a GIF
   const downloadGif = async (gifUrl, gifId) => {
     try {
       const res = await fetch(gifUrl);
@@ -59,45 +77,57 @@ export default function App() {
     }
   };
 
-  // Choose Gif: if already in the chosen list, remove it, else add it.
-  const chooseGif = (gifId) => {
-    setChosenGifIDs((prev) => {
-      if (prev.includes(gifId)) {
-        // Remove it if we want toggling off
-        return prev.filter((id) => id !== gifId);
-      }
-      // Else add it
-      return [...prev, gifId];
-    });
+  // Show only chosen GIFs
+  const storeForLater = () => {
+    setShowOnlyChosen(true);
   };
 
-  // Run search on first load
+  // Undo store-for-later
+  const handleUndo = () => {
+    setShowOnlyChosen(false);
+  };
+
+  // Wipe everything and also empty the 'gifs' array
+  // so if user clicks undo without searching again, there's no stale GIF to choose.
+  const handleWipe = () => {
+    localStorage.removeItem('chosenGifIDs');
+    localStorage.removeItem('allGifs');
+    setAllLocalGifs([]);
+    setChosenGifIDs([]);
+    setGifs([]); // ensure page is truly cleared
+  };
+
+  // On first load, restore from localStorage
   useEffect(() => {
-    searchGifs();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const savedAll = localStorage.getItem('allGifs');
+    if (savedAll) {
+      try {
+        setAllLocalGifs(JSON.parse(savedAll));
+      } catch {}
+    }
+    const savedChosen = localStorage.getItem('chosenGifIDs');
+    if (savedChosen) {
+      try {
+        setChosenGifIDs(JSON.parse(savedChosen));
+      } catch {}
+    }
   }, []);
 
-  // Toggle for Dark Mode and Light Mode
+  // Dark/Light theme
   const [isDarkMode, setIsDarkMode] = useState(false);
-
-  // Load the saved theme from localStorage
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme) {
       setIsDarkMode(savedTheme === 'dark');
     }
   }, []);
-
-  // Toggle the theme and save the choice to localStorage
   const toggleTheme = () => {
-    setIsDarkMode((prevMode) => {
-      const newMode = !prevMode;
+    setIsDarkMode((prev) => {
+      const newMode = !prev;
       localStorage.setItem('theme', newMode ? 'dark' : 'light');
       return newMode;
     });
   };
-
-  // Apply the theme to the document body
   useEffect(() => {
     if (isDarkMode) {
       document.body.style.backgroundColor = 'black';
@@ -108,25 +138,99 @@ export default function App() {
     }
   }, [isDarkMode]);
 
+  // If showing only chosen GIFs
+  if (showOnlyChosen) {
+    return (
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+          gap: '5px',
+          padding: '20px',
+          textAlign: 'left',
+        }}
+      >
+        {allLocalGifs
+          .filter((gif) => chosenGifIDs.includes(gif.id))
+          .map((gif) => (
+            <div key={gif.id}>
+              <div
+                style={{
+                  border: '5px solid green',
+                  display: 'inline-block',
+                  borderRadius: '5px',
+                }}
+              >
+                <img
+                  src={gif.images.fixed_height.url}
+                  alt={gif.title}
+                  style={{
+                    width: '120px',
+                    height: '120px',
+                    objectFit: 'cover',
+                    borderRadius: '10px',
+                  }}
+                />
+              </div>
+            </div>
+          ))}
+
+        {/* Wipe: on left side */}
+        <button
+          onClick={handleWipe}
+          style={{
+            position: 'fixed',
+            bottom: '20px',
+            left: '20px',
+            padding: '10px',
+            backgroundColor: 'red',
+            color: 'white',
+            border: 'none',
+            borderRadius: '5px',
+            cursor: 'pointer',
+          }}
+        >
+          Wipe
+        </button>
+
+        {/* Undo: on right side */}
+        <button
+          onClick={handleUndo}
+          style={{
+            position: 'fixed',
+            bottom: '20px',
+            right: '20px',
+            padding: '10px',
+            backgroundColor: 'gray',
+            color: 'white',
+            border: 'none',
+            borderRadius: '5px',
+            cursor: 'pointer',
+          }}
+        >
+          Undo
+        </button>
+      </div>
+    );
+  }
+
+  // Otherwise, normal page
   return (
     <div>
-      {/* Theme Toggle */}
       <span>{isDarkMode ? '🌙' : '☀️'}</span>
       &nbsp;
       <input
-        type='range'
+        type="range"
         onChange={toggleTheme}
         min={0}
         max={1}
         style={{ width: '40px' }}
       />
-
       <div style={{ textAlign: 'center', padding: '20px' }}>
-        <h1>Search Giphy : </h1>
-        {/* Search Input */}
+        <h1>Search Giphy:</h1>
         <input
-          type='text'
-          placeholder='search gifs'
+          type="text"
+          placeholder="search gifs"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => {
@@ -156,31 +260,10 @@ export default function App() {
         >
           Search
         </button>
-        <br />
-        {/* Range to control how many Gifs to show */}
-        <input
-          type='range'
-          value={limit}
-          min={limitmin}
-          max={limitmax}
-          style={{ width: '800px' }}
-          onChange={(e) => setLimit(e.target.value)}
-        />
-        <br />
-        <p>
-          Range:
-          <input
-            type='num'
-            style={{ width: '30px' }}
-            value={limit}
-            onChange={(e) => setLimit(e.target.value)}
-          />
-        </p>
-        <br />
-        {/* If loading, show spinner image; otherwise show Gifs */}
+
         {loading ? (
           <p>
-            <img src='../public/bally.svg' alt='ballbounce' />
+            <img src="../public/bally.svg" alt="ballbounce" />
           </p>
         ) : (
           <div
@@ -195,12 +278,11 @@ export default function App() {
               const isChosen = chosenGifIDs.includes(gif.id);
               return (
                 <div key={gif.id} style={{ padding: '5px' }}>
-                  {/* Nest the <img> in a box with border to isolate from the buttons */}
                   <div
                     style={{
                       border: isChosen ? '5px solid green' : 'none',
                       display: 'inline-block',
-                      borderRadius: '5px'
+                      borderRadius: '5px',
                     }}
                   >
                     <img
@@ -210,42 +292,59 @@ export default function App() {
                         width: '120px',
                         height: '120px',
                         objectFit: 'cover',
-                        borderRadius: '10px'
+                        borderRadius: '10px',
                       }}
                     />
                   </div>
-
-                  <br />
-                  <button
-                    onClick={() => downloadGif(gif.images.fixed_height.url, gif.id)}
-                    style={{
-                      marginTop: '3px',
-                      padding: '3px',
-                      color: 'brown',
-                      backgroundColor: '#f9f9f9',
-                      borderRadius: '3px',
-                      cursor: 'copy',
-                    }}
-                  >
-                    Download
-                  </button>
-                  <button
-                    onClick={() => chooseGif(gif.id)}
-                    style={{
-                      margin: '2px',
-                      padding: '3px',
-                      color: 'red',
-                      backgroundColor: '#f9f9f9',
-                      borderRadius: '3px',
-                    }}
-                  >
-                    Choose
-                  </button>
+                  <div style={{ marginTop: '5px' }}>
+                    <button
+                      onClick={() =>
+                        downloadGif(gif.images.fixed_height.url, gif.id)
+                      }
+                      style={{
+                        marginRight: '3px',
+                        padding: '3px',
+                        color: 'brown',
+                        backgroundColor: '#f9f9f9',
+                        borderRadius: '3px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Download
+                    </button>
+                    <button
+                      onClick={() => chooseGif(gif.id)}
+                      style={{
+                        marginLeft: '3px',
+                        padding: '3px',
+                        color: 'red',
+                        backgroundColor: '#f9f9f9',
+                        borderRadius: '3px',
+                      }}
+                    >
+                      Choose
+                    </button>
+                  </div>
                 </div>
               );
             })}
           </div>
         )}
+
+        <button
+          onClick={storeForLater}
+          style={{
+            marginTop: '20px',
+            padding: '10px',
+            backgroundColor: 'green',
+            color: 'white',
+            borderRadius: '5px',
+            border: 'none',
+            cursor: 'pointer',
+          }}
+        >
+          Store Selected Gifs For Later
+        </button>
       </div>
     </div>
   );
