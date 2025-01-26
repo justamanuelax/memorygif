@@ -122,30 +122,48 @@ export default function App() {
     setShowOnlyChosen(true);
   };
 
-  // handleFlipBox: called when user clicks a purple box.
+  {// handleFlipBox: called when user clicks a purple box.
   // If the flipped Gif is correct, increment score and remove that Gif after 2.5s.
   // Then pick the next random.
+  // handleFlipBox: called when user clicks a purple box.
+// If the flipped Gif is correct, increment score and remove that Gif after 1s.
+// Otherwise, revert it after 1s. Then pick the next random if it was correct.
+  }
   const handleFlipBox = (boxKey, gif) => {
-    // If the game is over, do nothing.
     if (gameComplete) return;
-
-    // Flip from hidden->visible or visible->hidden.
-    setFlipMap((prev) => ({ ...prev, [boxKey]: !prev[boxKey] }));
-
-    // If flipping from hidden->visible and it matches the randomGif.
-    if (!flipMap[boxKey] && randomGif && gif.id === randomGif.id) {
-      // correct guess => increment score.
-      setScore((p) => p + 1);
-
-      // Wait 2.5 seconds, then remove from chosenGifIDs, pick next random.
-      setTimeout(() => {
-        setChosenGifIDs((prev) => {
-          const updated = prev.filter((id) => id !== gif.id);
-          localStorage.setItem('chosenGifIDs', JSON.stringify(updated));
-          return updated;
-        });
-        pickRandomGif();
-      }, 2500);
+  
+    const wasFlipped = !flipMap[boxKey];
+    
+    setFlipMap((prev) => ({
+      ...prev,
+      [boxKey]: wasFlipped,
+    }));
+  
+    if (wasFlipped && randomGif) {
+      if (gif.id === randomGif.id) {
+        // Correct match - increment score
+        setScore((p) => p + 1);
+  
+        setTimeout(() => {
+          // Remove the matched GIF from the pool
+          setChosenGifIDs((prev) => {
+            const updated = prev.filter((id) => id !== gif.id);
+            localStorage.setItem('chosenGifIDs', JSON.stringify(updated));
+            return updated;
+          });
+          
+          // Pick new random GIF from remaining pool
+          pickRandomGif();
+        }, 1000);
+      } else {
+        // Incorrect match - revert flip after delay
+        setTimeout(() => {
+          setFlipMap((prev) => ({ 
+            ...prev, 
+            [boxKey]: false 
+          }));
+        }, 1000);
+      }
     }
   };
 
@@ -181,17 +199,28 @@ export default function App() {
 
   // pickRandomGif: selects a random Gif from the chosenGifIDs as the next target.
   // If none remain => gameComplete.
+
   const pickRandomGif = () => {
+    // Filter the chosen Gifs from allLocalGifs
     const chosenList = allLocalGifs.filter((g) => chosenGifIDs.includes(g.id));
+  
+    // If no chosen Gifs are left, declare the game as complete
     if (chosenList.length === 0) {
-      // No chosen left => you win.
-      setRandomGif(null);
       setGameComplete(true);
       return;
     }
+  
+    
+  
+    // Select a random index within the decreasing range (0 to maxIdx)
     const idx = Math.floor(Math.random() * chosenList.length);
-    setRandomGif(chosenList[idx]);
+    // Set the randomly chosen Gif as the target
+    setRandomGif(chosenList[idx +1]);
+   console.log(idx);
+    console.log(chosenList.length);
+    console.log(chosenList[idx]);
   };
+  
 
   // handleCover: covers all chosen Gifs with purple boxes and picks the first random.
   const handleCover = () => {
@@ -345,40 +374,49 @@ export default function App() {
           }
         })}
 
+
         {/* If gameComplete => show "You Won" overlay with score and a rematch button. */}
         {gameComplete && (
-          <div
-            style={{
-              position: 'fixed',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              backgroundColor: 'rgba(0, 0, 0, 0.7)',
-              color: 'white',
-              padding: '20px',
-              borderRadius: '10px',
-              textAlign: 'center',
-            }}
-          >
-            <h1>You Won!</h1>
-            <p>Score: {score}</p>
-            <button
-              onClick={handleRematch}
-              style={{
-                marginTop: '10px',
-                padding: '10px',
-                backgroundColor: 'green',
-                color: 'white',
-                borderRadius: '5px',
-                border: 'none',
-                cursor: 'pointer',
-              }}
-            >
-              Rematch
-            </button>
-          </div>
-        )}
-
+  <div
+    style={{
+      position: 'fixed',
+      top: '50%',
+      left: '50%',
+      transform: 'translate(-50%, -50%)',
+      backgroundColor: 'rgba(0, 0, 0, 0.9)',
+      color: 'white',
+      padding: '40px',
+      borderRadius: '15px',
+      textAlign: 'center',
+      boxShadow: '0 0 20px rgba(255, 255, 255, 0.3)',
+      zIndex: 1000,
+    }}
+  >
+    <h1 style={{ fontSize: '2.5em', margin: '0 0 20px 0' }}>
+      🎉 Congratulations! 🎉
+    </h1>
+    <h2 style={{ fontSize: '2em', margin: '0 0 30px 0' }}>
+      You scored: {score}
+    </h2>
+    <button
+      onClick={handleRematch}
+      style={{
+        padding: '15px 30px',
+        fontSize: '1.2em',
+        backgroundColor: '#4CAF50',
+        color: 'white',
+        borderRadius: '8px',
+        border: 'none',
+        cursor: 'pointer',
+        transition: 'transform 0.2s',
+      }}
+      onMouseOver={(e) => (e.target.style.transform = 'scale(1.05)')}
+      onMouseOut={(e) => (e.target.style.transform = 'scale(1)')}
+    >
+      Play Again
+    </button>
+  </div>
+)}
         {/* Wipe => clears everything; disabled if game in progress. */}
         <button
           onClick={handleWipe}
@@ -443,33 +481,39 @@ export default function App() {
         </button>
 
         {/* If covered and not complete => show randomGif at bottom. The user tries to find it among the purple boxes. */}
-        {covered && !gameComplete && randomGif && (
-          <div
-            style={{
-              position: 'fixed',
-              bottom: 0,
-              left: 0,
-              width: '100%',
-              backgroundColor: '#ddd',
-              borderTop: '2px solid #ccc',
-              padding: '10px',
-              textAlign: 'center',
-            }}
-          >
-            <h3>Find This Gif</h3>
-            <img
-              src={randomGif.images.fixed_height.url}
-              alt={randomGif.title}
-              style={{
-                width: '150px',
-                height: '150px',
-                objectFit: 'cover',
-                borderRadius: '10px',
-              }}
-            />
-            <p>Score: {score}</p>
-          </div>
-        )}
+        
+{covered && !gameComplete && randomGif && (
+  <div
+    style={{
+      position: 'fixed',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      width: '100%',
+      backgroundColor: '#ddd',
+      borderTop: '2px solid #ccc',
+      padding: '10px',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: '10px',
+    }}
+  >
+    <h3>Find This Gif</h3>
+    <img
+      src={randomGif.images.fixed_height.url}
+      alt={randomGif.title}
+      style={{
+        width: '150px',
+        height: '150px',
+        objectFit: 'cover',
+        borderRadius: '10px',
+      }}
+    />
+    <p>Score: {score}</p>
+  </div>
+)}
       </div>
     );
   }
